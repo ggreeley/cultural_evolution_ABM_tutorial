@@ -118,14 +118,15 @@ plot(output$p,
 
 ```
 
-Note the title of the graph, which gives the value of $N$ for this simulation. It's easy to create plots and forget what the parameters were. It's therefore a good idea to include it somewhere on the graph. There's no need to include our other parameter, $t_{max}$, because that can be seen from the x-axis scale.
+Note the title of the graph, whic
+h gives the value of $N$ for this simulation. It's easy to create plots and forget what the parameters were. It's therefore a good idea to include it somewhere on the graph. There's no need to include our other parameter, $t_{max}$, because that can be seen from the x-axis scale.
 
 Unbiased transmission, or random copying, is by definition random, so different runs of this simulation will generate different plots. If you rerun all the code you'll get something different again. It probably starts off hovering around 0.5, the approximate starting value of $p$, and might go to 0 or 1 at some point. At $p = 0$ there are no $A$s and every agent possesses $B$. At $p = 1$ there are no $B$s and every agent possesses $A$. This is a typical feature of cultural drift, analogous to genetic drift: in small populations, with no selection or other directional processes operating, traits can be lost purely by chance.
 
 Ideally we would like to repeat the simulation to explore this idea in more detail, perhaps changing some of the parameters. For example, if we increase $N$, are we more or less likely to lose one of the traits? With our code scattered about in chunks, it is hard to quickly repeat the simulation. Instead we can wrap it all up in a function, like so:
 
 ```{r}
-
+# rename to snake case
 UnbiasedTransmission <- function (N, t_max) {
   
   agent <- data.frame(trait = sample(c("A","B"), N, replace = TRUE))
@@ -147,16 +148,209 @@ UnbiasedTransmission <- function (N, t_max) {
   
   }
   
-  plot(output$p, 
-       type = 'l', 
-       ylab = "p, proportion of agents with trait A", 
-       xlab = "generation", 
-       ylim = c(0,1), 
-       main = paste("N =", N))
+  # i'll do my own plotting with the created data object
+  #plot(output$p, 
+  #     type = 'l', 
+  #     ylab = "p, proportion of agents with trait A", 
+  #     xlab = "generation", 
+  #     ylim = c(0,1), 
+  #     main = paste("N =", N))
   
 }
 
 ```
+
+### Start GG Custom
+
+```{r}
+library(tidyverse)
+```
+
+
+**ADDED BY GG**: Extended function (created before I saw similar extended function below) to allow for specifying number of simulations. 
+
+```{r}
+
+unbiased_transmission <- function(pop_size,
+                                  n_generations,
+                                  initial_prob_trait = NULL,
+                                  n_simulations) {
+  
+  store <- list()
+  
+  for (i in 1:n_simulations) {
+    
+    agent <- data.frame(trait = sample(c("A","B"), pop_size,
+                                       prob = c(initial_prob_trait, 1-initial_prob_trait),
+                                       replace = TRUE))
+  
+    output <- data.frame(p = rep(NA, n_generations),
+                         n_sim = rep(NA, n_simulations))
+  
+    output$p[1] <- sum(agent$trait == "A") / pop_size
+    output$n_sim <- i
+    output$n_itr[1] <- 1
+    output$initial_prob_trait <- initial_prob_trait
+  
+      for (t in 2:n_generations) {
+  
+        # copy agent to previous_agent dataframe
+        previous_agent <- agent  
+  
+        # randomly copy from previous generation
+        agent <- data.frame(trait = sample(previous_agent$trait, pop_size, replace = TRUE))  
+  
+        # get p and put it into output slot for this generation t
+        output$p[t] <- sum(agent$trait == "A") / pop_size 
+        
+        # track the iteration
+        output$n_itr[t] <- t 
+        
+        # place output data in list
+        store[[i]] <- output
+    }
+  }
+  return(store)
+}
+
+#unbiased_transmission(pop_size = 100, n_generations = 100, prob_trait = 0.5, n_simulations = 5)
+```
+
+Generate some data
+
+```{r}
+# 100 independent agents in each of the 100 generations
+# trait "A" (vs "B") is selected from the previous with prob = 0.25
+  # repeat evolution process 50 times
+prob_a_25 <- unbiased_transmission(pop_size              = 100,
+                                   n_generations         = 500,
+                                   initial_prob_trait    = 0.25,
+                                   n_simulations         = 50)
+
+prob_a_50 <- unbiased_transmission(pop_size              = 100,
+                                   n_generations         = 500,
+                                   initial_prob_trait    = 0.50,
+                                   n_simulations         = 50)
+
+prob_a_75 <- unbiased_transmission(pop_size              = 100,
+                                   n_generations         = 500,
+                                   initial_prob_trait    = 0.75,
+                                   n_simulations         = 50)
+
+# add some flexibility by allowing different prob_trait values
+unbiased_transmission_mult_prob <- function(initial_prob_grid = NULL) {
+  
+  store_list <- list()
+  
+  for (i in initial_prob_grid) {
+  
+  sim_dat <- unbiased_transmission(pop_size          = 100,
+                               n_generations         = 500,
+                               initial_prob_trait    = i,
+                               n_simulations         = 50)
+  
+  store_list[[length(store_list) + 1]] <- sim_dat
+  
+  }
+  return(store_list)
+}
+
+# for each probability (prop) in prob_grid,
+# simulate 50 each:
+  # population of 100 across 500 generations, 
+  # each individual in each generation samples trait A with prob i from previous generation
+prob_a_range <- unbiased_transmission_mult_prob(initial_prob_grid = seq(from = 0.1,
+                                                                        to   = 0.9,
+                                                                        by   = 0.1))
+```
+
+Plot
+
+```{r}
+
+list(prob_a_25,
+     prob_a_50,
+     prob_a_75) |>
+  bind_rows() |>
+  mutate(full_info = str_c(n_sim, n_itr, initial_prob_trait, sep = "_"),
+         sim_prob_info = str_c(n_sim, initial_prob_trait, sep = "_"),
+         sim_prob_info = as.factor(sim_prob_info),
+         n_sim = as.factor(n_sim),
+         initial_prob_trait = as.factor(initial_prob_trait)) |>
+  ggplot(aes(x = n_itr, y = p, color = initial_prob_trait)) +
+  geom_line(aes(group = sim_prob_info)) +
+  facet_wrap(~ initial_prob_trait) +
+  scale_x_continuous(breaks = c(1, 100, 200, 300, 400, 500)) +
+  labs(title = "Population of 100 Across 500 Geneartions",
+       x = "Generation",
+       y = "% of Population w/ Trait 'A'",
+       color = "Trait 'A' Prevalence at Gen = 1") +
+  theme_light()
+
+# confirm right number of rows for each prob_trait
+prob_a_range |>
+  bind_rows() |>
+  group_by(initial_prob_trait) |>
+  count()
+
+# add and/or aggregate data for further exploration
+prob_a_range_mod <- prob_a_range |>
+  bind_rows() |>
+  mutate(full_info = str_c(n_sim, n_itr, initial_prob_trait, sep = "_"),
+         sim_prob_info = str_c(n_sim, initial_prob_trait, sep = "_"),
+         sim_prob_info = as.factor(sim_prob_info),
+         n_sim = as.factor(n_sim),
+         initial_prob_trait = as.factor(initial_prob_trait)) |> 
+  group_by(initial_prob_trait, n_itr) |>
+  mutate(p_itr_mean = mean(p),
+         p_itr_plus_se = p_itr_mean + (sd(p) / sqrt(50)),
+         p_itr_minus_se = p_itr_mean - (sd(p) / sqrt(50))) |>
+  ungroup() |> 
+  group_by(n_sim, initial_prob_trait) |>
+  mutate(gen_complete_1 = which(p == 1)[1],
+         gen_complete_0 = which(p == 0.00)[1]) |>
+  ungroup()
+
+prob_a_range_mod |>
+  ggplot(aes(x = n_itr, y = p)) +
+  geom_line(aes(group = sim_prob_info),
+            color = "grey") +
+  geom_line(aes(x = n_itr, y = p_itr_mean, group = initial_prob_trait),
+            color = "darkred") +
+  geom_ribbon(aes(ymin = p_itr_minus_se, ymax = p_itr_plus_se),
+              fill = "darkred",
+              color = "white",
+              alpha = 0.2) +
+  facet_wrap(~ initial_prob_trait) +
+  scale_x_continuous(breaks = c(1, 100, 200, 300, 400, 500)) +
+  labs(title = "Population of 100 Across 500 Geneartions\n50 Simulated Evolutions",
+       x = "Generation",
+       y = "% of Population w/ Trait 'A'",
+       color = "Trait 'A' Prevalance at Gen = 1") +
+  theme_light()
+
+prob_a_range_mod |>
+  select(initial_prob_trait, n_sim, gen_complete_0, gen_complete_1) |>
+  group_by(initial_prob_trait, n_sim) |>
+  slice_head(n = 1) |>
+  ungroup() |>
+  pivot_longer(cols = starts_with("gen"),
+               names_to = "gen_complete",
+               values_to = "gen_to_complete") |>
+  group_by(initial_prob_trait, gen_complete) |>
+  mutate(mean_gen_finish = mean(gen_to_complete, na.rm = TRUE)) |>
+  ungroup() |> 
+  ggplot(aes(x = gen_to_complete, fill = gen_complete)) +
+  geom_histogram() +
+  geom_vline(aes(xintercept = mean_gen_finish, color = gen_complete)) +
+  facet_wrap(~ initial_prob_trait) +
+  theme_light()
+```
+
+
+### End GG Custom
+
+
 
 This is just all of the code snippets that we already ran above, but all within a function with parameters $N$ and $t_{max}$ as arguments to the function. Nothing will happen when you run the above code, because all you've done is define the function, not actually run it. The point is that we can now call the function in one go, easily changing the values of $N$ and $t_{max}$. Let's try first with the same values of $N$ and $t_{max}$ as before, to check it works. You can re-run the code below several times, to see different dynamics. It should be different every time.
 

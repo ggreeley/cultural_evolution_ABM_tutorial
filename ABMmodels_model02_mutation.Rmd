@@ -46,7 +46,7 @@ UnbiasedMutation <- function (N, mu, p_0, t_max, r_max) {
       previous_agent <- agent  
       
       # get N random numbers each between 0 and 1
-      mutate <- runif(N)  
+      mutate_probs <- runif(pop_size)  
       
       # if agent was A, with probability mu, flip to B
       agent$trait[previous_agent$trait == "A" & mutate < mu] <- "B"  
@@ -82,6 +82,148 @@ UnbiasedMutation <- function (N, mu, p_0, t_max, r_max) {
 
 ```
 
+### Start GG Custom
+
+```{r}
+library(tidyverse)
+```
+
+Modify my own custom function (`unbiased_transmission()`) to add generation-to-generation *unbiased* mutation.
+
+```{r}
+unbiased_mutation <- function(pop_size,
+                              n_generations,
+                              initial_prob_trait = NULL,
+                              generation_mutate_prob = NULL,
+                              n_simulations) {
+  
+  store <- list()
+  
+  for (i in 1:n_simulations) {
+    
+    agent <- data.frame(trait = sample(c("A","B"), pop_size,
+                                       prob = c(initial_prob_trait, 1-initial_prob_trait),
+                                       replace = TRUE))
+  
+    output <- data.frame(p = rep(NA, n_generations),
+                         n_sim = rep(NA, n_simulations))
+  
+    output$p[1] <- sum(agent$trait == "A") / pop_size
+    output$n_sim <- i
+    output$n_itr[1] <- 1
+    output$initial_prob_trait <- initial_prob_trait
+  
+      for (t in 2:n_generations) {
+  
+        # copy agent to previous_agent dataframe
+        previous_agent <- agent
+        
+        # mutate probability, drawn from runit(0,1)
+        mutate_probs <- runif(pop_size)
+        
+        # if agent was A, with probability mu, flip to B
+        agent$trait[previous_agent$trait == "A" & mutate_probs < generation_mutate_prob] <- "B"  
+      
+        # if agent was B, with probability mu, flip to A
+        agent$trait[previous_agent$trait == "B" & mutate_probs < generation_mutate_prob] <- "A" 
+  
+        # get p and put it into output slot for this generation t
+        output$p[t] <- sum(agent$trait == "A") / pop_size 
+        
+        # track the iteration
+        output$n_itr[t] <- t 
+        
+        # place output data in list
+        store[[i]] <- output
+    }
+  }
+  return(store)
+}
+```
+
+Try it out
+
+```{r}
+um_test <- unbiased_mutation(pop_size = 100,
+                  n_generations = 100,
+                  initial_prob_trait = 0.99,
+                  generation_mutate_prob = 0.05,
+                  n_simulations = 20)
+
+bind_rows(um_test) |>
+  ggplot(aes(x = n_itr, y = p, group = n_sim)) +
+  geom_line()
+```
+
+Extend to allow for various generation mutation probabilities
+
+```{r}
+
+unbiased_mutation_mult_prob <- function(initial_prob_grid = NULL) {
+  
+  store_list <- list()
+  
+  for (i in initial_prob_grid) {
+  
+  sim_dat <- unbiased_mutation(pop_size = 100,
+                               n_generations = 100,
+                               initial_prob_trait = i,
+                               generation_mutate_prob = 0.05,
+                               n_simulations = 20)
+  
+  store_list[[length(store_list) + 1]] <- sim_dat
+  
+  }
+  return(store_list)
+}
+
+```
+
+Try it out
+
+```{r}
+um_mult_test <- unbiased_mutation_mult_prob(initial_prob_grid = seq(from = 0.1,
+                                                                    to = 0.9,
+                                                                    by = 0.1))
+
+prob_a_mutate_range_mod <- um_mult_test |>
+  bind_rows() |>
+  mutate(full_info = str_c(n_sim, n_itr, initial_prob_trait, sep = "_"),
+         sim_prob_info = str_c(n_sim, initial_prob_trait, sep = "_"),
+         sim_prob_info = as.factor(sim_prob_info),
+         n_sim = as.factor(n_sim),
+         initial_prob_trait = as.factor(initial_prob_trait)) |> 
+  group_by(initial_prob_trait, n_itr) |>
+  mutate(p_itr_mean = mean(p),
+         p_itr_plus_se = p_itr_mean + (sd(p) / sqrt(50)),
+         p_itr_minus_se = p_itr_mean - (sd(p) / sqrt(50))) |>
+  ungroup() |> 
+  group_by(n_sim, initial_prob_trait) |>
+  mutate(gen_complete_1 = which(p == 1)[1],
+         gen_complete_0 = which(p == 0.00)[1]) |>
+  ungroup()
+
+prob_a_mutate_range_mod |>
+  ggplot(aes(x = n_itr, y = p)) +
+  geom_line(aes(group = sim_prob_info),
+            color = "grey") +
+  geom_line(aes(x = n_itr, y = p_itr_mean, group = initial_prob_trait),
+            color = "darkred") +
+  geom_ribbon(aes(ymin = p_itr_minus_se, ymax = p_itr_plus_se),
+              fill = "darkred",
+              color = "white",
+              alpha = 0.2) +
+  facet_wrap(~ initial_prob_trait) +
+  scale_x_continuous(breaks = c(1, 100)) +
+  labs(title = "Population of 100 Across 100 Geneartions\n20 Simulated Evo Cycles w/ Mutate Prob = 0.05",
+       x = "Generation",
+       y = "% of Population w/ Trait 'A'",
+       color = "Sample Preference for Trait 'A'") +
+  theme_light()
+```
+
+### End GG Custom
+
 The only changes from Model 1 are the addition of $\mu$ in the function definition and the plot title, and three new lines of code within the $t$ **for** loop which replace the random copying command with unbiased mutation. Let's examine these three lines to see how they work.
 
 The most obvious way of implementing unbiased mutation - which is NOT done above - would have been to set up another **for** loop. We would cycle through each agent one by one, each time calculating whether it should mutate or not based on $mu$. This would certainly work, but R is notoriously slow at loops. It's always preferable in R, where possible, to use 'vectorised' code. That's what is done above in our three added lines. 
@@ -96,10 +238,10 @@ N <- 100
 mu <- 1  # maximum mutation rate of 1
 
 # get N random numbers each between 0 and 1
-mutate <- runif(N)
+mutate_dem <- runif(N)
 
 # always mutate
-mutate < mu
+mutate_dem < mu
 
 ```
 
@@ -222,6 +364,155 @@ BiasedMutation <- function (N, mu_b, p_0, t_max, r_max) {
 }
 
 ```
+
+### Start GG Custom
+
+Modify my own custom function (`unbiased_transmission()`) to add generation-to-generation *unbiased* mutation.
+
+```{r}
+biased_mutation <- function(pop_size,
+                              n_generations,
+                              initial_prob_trait = NULL,
+                              generation_mutate_prob = NULL, # 'a' preference
+                              n_simulations) {
+  
+  store <- list()
+  
+  for (i in 1:n_simulations) {
+    
+    agent <- data.frame(trait = sample(c("A","B"), pop_size,
+                                       prob = c(initial_prob_trait, 1-initial_prob_trait),
+                                       replace = TRUE))
+  
+    output <- data.frame(p = rep(NA, n_generations),
+                         n_sim = rep(NA, n_simulations))
+  
+    output$p[1] <- sum(agent$trait == "A") / pop_size
+    output$n_sim <- i
+    output$n_itr[1] <- 1
+    output$initial_prob_trait <- initial_prob_trait
+    output$generation_mutate_prob <- generation_mutate_prob
+  
+      for (t in 2:n_generations) {
+  
+        # copy agent to previous_agent dataframe
+        previous_agent <- agent
+        
+        # mutate probability, drawn from runit(0,1)
+        mutate_probs <- runif(pop_size)
+      
+        # if agent was B, with probability mu, flip to A
+        agent$trait[previous_agent$trait == "B" & mutate_probs < generation_mutate_prob] <- "A" 
+  
+        # get p and put it into output slot for this generation t
+        output$p[t] <- sum(agent$trait == "A") / pop_size 
+        
+        # track the iteration
+        output$n_itr[t] <- t 
+        
+        # place output data in list
+        store[[i]] <- output
+    }
+  }
+  return(store)
+}
+```
+
+```{r}
+biased_mutation_mult_prob <- function(initial_prob_grid = NULL) {
+  
+  store_list <- list()
+  
+  for (i in initial_prob_grid) {
+  
+  sim_dat <- biased_mutation(pop_size = 100,
+                               n_generations = 100,
+                               initial_prob_trait = i,
+                               generation_mutate_prob = 0.05,
+                               n_simulations = 20)
+  
+  store_list[[length(store_list) + 1]] <- sim_dat
+  
+  }
+  return(store_list)
+}
+
+# possible to make version of this function that also cycles through 
+# mutation probability values, e.g., argument for mutate_prob_grid = NULL)
+biased_mutation_mult_flex <- function(initial_prob_grid = NULL,
+                                 mutate_prob_grid  = NULL) {
+  
+  store_list <- list()
+  
+  for (i in initial_prob_grid) {
+    
+    for (j in mutate_prob_grid) {
+      
+      sim_dat <- biased_mutation(pop_size = 100,
+                               n_generations = 100,
+                               initial_prob_trait = i,
+                               generation_mutate_prob = j,
+                               n_simulations = 20)
+  
+      store_list[[length(store_list) + 1]] <- sim_dat
+      
+    }
+  }
+  return(store_list)
+}
+
+#MULT_trial <- biased_mutation_MULT(initial_prob_grid = c(0.25, 0.75),
+#                                   mutate_prob_grid = c(0.05, 0.20))
+```
+
+Test `biased_mutation_mult_prob()`
+
+```{r}
+bm_mult_test <- biased_mutation_mult_prob(initial_prob_grid = seq(from = 0.1, to = 0.9, by = 0.1))
+
+prob_a_bimutate_range_mod <- bm_mult_test |>
+  bind_rows() |>
+  mutate(full_info = str_c(n_sim, n_itr, initial_prob_trait, sep = "_"),
+         sim_prob_info = str_c(n_sim, initial_prob_trait, sep = "_"),
+         sim_prob_info = as.factor(sim_prob_info),
+         n_sim = as.factor(n_sim),
+         initial_prob_trait = as.factor(initial_prob_trait)) |> 
+  group_by(initial_prob_trait, n_itr) |>
+  mutate(p_itr_mean = mean(p),
+         p_itr_plus_se = p_itr_mean + (sd(p) / sqrt(50)),
+         p_itr_minus_se = p_itr_mean - (sd(p) / sqrt(50))) |>
+  ungroup() |> 
+  group_by(n_sim, initial_prob_trait) |>
+  mutate(gen_complete_1 = which(p == 1)[1],
+         gen_complete_0 = which(p == 0.00)[1]) |>
+  ungroup()
+
+prob_a_bimutate_range_mod |>
+  ggplot(aes(x = n_itr, y = p)) +
+  geom_line(aes(group = sim_prob_info),
+            color = "grey") +
+  geom_line(aes(x = n_itr, y = p_itr_mean, group = initial_prob_trait),
+            color = "darkred") +
+  geom_ribbon(aes(ymin = p_itr_minus_se, ymax = p_itr_plus_se),
+              fill = "darkred",
+              color = "white",
+              alpha = 0.2) +
+  facet_wrap(~ initial_prob_trait) +
+  scale_x_continuous(breaks = c(1, 100)) +
+  labs(title = "Population of 100 Across 100 Geneartions\n20 Simulated Evo Cycles w/ Mutate Prob = 0.05",
+       x = "Generation",
+       y = "% of Population w/ Trait 'A'",
+       color = "Sample Preference for Trait 'A'") +
+  theme_light()
+```
+
+Test `biased_mutation_mult_flex()`, which allows for specifying a range of both a) starting generation trait prevalence and b) mutation probabilities. If this feature is always desired, could place arguments from `biased_mutation()` into this function for controling other parameters as well.
+
+```{r}
+biased_mutation_mult_flex()
+```
+
+### End GG Custom
 
 There are just two changes in this code compared to **UnbiasedMutation**. First, we've replaced $\mu$ with $\mu_b$ to keep the two parameters distinct and avoid confusion. Second, the line in **UnbiasedMutation** which caused agents with $A$ to mutate to $B$ has been deleted.
 

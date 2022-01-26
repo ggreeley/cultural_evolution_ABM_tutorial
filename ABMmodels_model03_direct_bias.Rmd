@@ -84,6 +84,80 @@ BiasedTransmission <- function (N, s, p_0, t_max, r_max) {
 
 ```
 
+## Start GG Custom
+
+```{r}
+biased_transmission <- function(pop_size,
+                                n_generations,
+                                initial_prob_trait  = NULL,
+                                # if rand prev. gen = A, copy with this prob:
+                                # hence, biased *transmission* from prev. gen
+                                s_transmission_prob = NULL,
+                                n_simulations) {
+  
+  store <- list()
+  
+  for (i in 1:n_simulations) {
+    
+    agent <- data.frame(trait = sample(c("A","B"), pop_size,
+                                       prob = c(initial_prob_trait, 1-initial_prob_trait),
+                                       replace = TRUE))
+  
+    output <- data.frame(p = rep(NA, n_generations),
+                         n_sim = rep(NA, n_simulations))
+  
+    output$p[1] <- sum(agent$trait == "A") / pop_size
+    output$n_sim <- i
+    output$n_itr[1] <- 1
+    output$initial_prob_trait <- initial_prob_trait
+    output$s_transmission_prob <- s_transmission_prob
+  
+      for (t in 2:n_generations) {
+  
+        # copy agent to previous_agent dataframe
+        previous_agent <- agent
+        
+        # for each, randomly sample agent from previous generation
+        demonstrator <- sample(previous_agent$trait, size = pop_size, replace = FALSE)
+        
+        # uniform distribution of transmission probs
+        transmission_probs <- runif(pop_size)
+      
+        # if agent was A, with adopt with probability s
+        agent$trait[demonstrator == "A" & transmission_probs < s_transmission_prob] <- "A" 
+  
+        # get p and put it into output slot for this generation t
+        output$p[t] <- sum(agent$trait == "A") / pop_size 
+        
+        # track the iteration
+        output$n_itr[t] <- t 
+        
+        # place output data in list
+        store[[i]] <- output
+    }
+  }
+  return(store)
+}
+```
+
+Test...
+
+Looks good!
+
+```{r}
+test <- biased_transmission(pop_size = 100,
+                    n_generations = 100,
+                    initial_prob_trait = 0.10,
+                    s_transmission_prob = 0.5,
+                    n_simulations = 10)
+
+bind_rows(test) |>
+  ggplot(aes(x = n_itr, y = p, group = n_sim)) +
+  geom_line()
+```
+
+## End GG Custom
+
 Most of **BiasedTransmission** is recycled from Models 1 and 2. As before, we set up a dataframe to hold the *output* from multiple runs, and in generation $t = 1$ create a dataframe to hold the trait of each *agent*. The plot function is also similar, but now we add $s$ to the plot title so we don't forget it.
 
 The major change is that we now include biased transmission from the second generation onwards. Using vectorised code, we pick for each of $N$ agents one of the previous generation's agents at random and store their trait in *demonstrator_trait*. Then we get random numbers between 0 and 1 for each agent and store these in *copy*. If the demonstrator has trait $A$ (*demonstrator_trait* == *"A"*), and with probability $s$ (*copy* < *s*), then the agent adopts trait $A$.
